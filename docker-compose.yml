@@ -1,0 +1,8 @@
+# Uso:  docker compose run --rm demo
+# (con "run" la terminal queda conectada al contenedor y funcionan los Enter)
+services:
+  demo:
+    build: .
+    image: grupo2-demo
+    stdin_open: true   # deja escribir en la terminal (los Enter)
+    tty: true          # colores y pantalla de terminal
