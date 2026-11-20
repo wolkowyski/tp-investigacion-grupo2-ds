@@ -1,8 +1,21 @@
-# Uso:  docker compose run --rm demo
-# (con "run" la terminal queda conectada al contenedor y funcionan los Enter)
+# Uso:
+#   docker compose run --rm demo     la demo por terminal
+#                                    (con "run" la terminal queda conectada y funcionan los Enter)
+#   docker compose up api            la API HTTP en http://localhost:5050 (para Postman)
 services:
   demo:
     build: .
     image: grupo2-demo
     stdin_open: true   # deja escribir en la terminal (los Enter)
     tty: true          # colores y pantalla de terminal
+
+  api:
+    build: .
+    image: grupo2-demo
+    command: ["python", "api.py"]
+    environment:
+      HOST: 0.0.0.0    # dentro del contenedor tiene que escuchar en todas las interfaces
+      PORT: "5050"
+    ports:
+      - "5050:5050"
+    tty: true          # colores en el registro de pedidos
