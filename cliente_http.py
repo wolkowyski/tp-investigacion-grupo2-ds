@@ -12,12 +12,15 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 
-def pedir(url, metodo, ruta, body=None, clave=None):
+def pedir(url, metodo, ruta, body=None, clave=None, carga=False):
     datos = json.dumps(body).encode("utf-8") if body is not None else None
     pedido = urllib.request.Request(url + ruta, data=datos, method=metodo)
     pedido.add_header("Content-Type", "application/json")
     if clave:
         pedido.add_header("Idempotency-Key", clave)
+    if carga:
+        # Avisa que es parte de la prueba con hilos: la API lo registra en una sola línea.
+        pedido.add_header("X-Prueba-Carga", "1")
     try:
         with urllib.request.urlopen(pedido, timeout=30) as r:
             return r.status, json.loads(r.read()), dict(r.headers)
@@ -31,7 +34,7 @@ def en_paralelo(url, pedidos):
 
     def mandar(p):
         barrera.wait()
-        return pedir(url, *p)
+        return pedir(url, *p, carga=True)
 
     with ThreadPoolExecutor(len(pedidos)) as hilos:
         return list(hilos.map(mandar, pedidos))

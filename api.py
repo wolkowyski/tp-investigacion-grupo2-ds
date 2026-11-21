@@ -34,6 +34,7 @@ Endpoints, por caso (A = sin el concepto, B = con el concepto):
 import json
 import os
 import re
+import sys
 import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -47,6 +48,7 @@ from caso2_deduplicacion import procesar_con_deduplicacion, procesar_sin_dedupli
 from caso3_condicion_carrera import acreditar_ganancia, acreditar_ganancia_atomica
 from caso4_control_concurrencia import asignar_con_bloqueo_optimista, asignar_sin_control
 from caso5_todo_junto import reservar
+import registro
 from consola import color
 from db import conectar, reiniciar
 
@@ -61,10 +63,12 @@ PORT = int(os.environ.get("PORT", "5050"))
 def ejecutar(pedido):
     """Corre una función generadora de los casos hasta el final, sin pausas,
     y devuelve lo que retorna. En la terminal los `yield` servían para pausar
-    con Enter; acá el pedido avanza solo, como en un servidor real."""
+    con Enter; acá el pedido avanza solo, como en un servidor real.
+    Cada texto de un `yield` se anota en el registro: son los mismos pasos que en main.py."""
+    registro.anotar_funcion(pedido.__name__, os.path.basename(pedido.gi_code.co_filename))
     while True:
         try:
-            next(pedido)
+            registro.anotar_paso(next(pedido))
         except StopIteration as fin:
             return fin.value
 
@@ -274,15 +278,48 @@ GET_CON_ID = {
 # El servidor HTTP (lectura del pedido y escritura de la respuesta)
 # ==========================================================================
 
+PANEL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "panel.html")
+
+
+def get_estado():
+    """Lo que dibuja el panel: las tablas de la base y los últimos pedidos."""
+    pedidos, contador = registro.historial()
+    return {"base": os.path.basename(registro.db.RUTA), "contador": contador,
+            "tablas": registro.estado_de_la_base(), "pedidos": pedidos}
+
+
 class Manejador(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     silencioso = False
 
     def do_GET(self):
-        self._atender(self._get)
+        ruta = self.path.split("?")[0].rstrip("/") or "/"
+        if ruta == "/panel":
+            with open(PANEL, "rb") as f:
+                return self._enviar_crudo(200, f.read(), "text/html; charset=utf-8")
+        if ruta == "/estado":
+            datos = json.dumps(get_estado(), ensure_ascii=False).encode("utf-8")
+            return self._enviar_crudo(200, datos, "application/json; charset=utf-8")
+        if ruta == "/favicon.ico":
+            return self._enviar_crudo(204, b"", "image/x-icon")
+        self._atender(self._get)   # /panel, /estado y /favicon.ico no se registran: el panel pide /estado cada segundo
 
     def do_POST(self):
         self._atender(self._post)
+
+    def _enviar_crudo(self, codigo, datos, tipo):
+        self.send_response(codigo)
+        self.send_header("Content-Type", tipo)
+        self.send_header("Content-Length", str(len(datos)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(datos)
+
+    def send_header(self, nombre, valor):
+        # Guardamos los headers que mandamos, para mostrarlos en el registro.
+        if hasattr(self, "_headers_enviados"):
+            self._headers_enviados.append((nombre, str(valor)))
+        super().send_header(nombre, valor)
 
     def _get(self):
         ruta = self.path.split("?")[0].rstrip("/") or "/"
@@ -309,6 +346,7 @@ class Manejador(BaseHTTPRequestHandler):
             raise ErrorHTTP(404, f"no existe {ruta}")
         largo = int(self.headers.get("Content-Length") or 0)
         crudo = self.rfile.read(largo) if largo else b""
+        self._body_pedido = crudo.decode("utf-8", "replace")
         try:
             body = json.loads(crudo or b"{}")
         except json.JSONDecodeError:
@@ -318,14 +356,25 @@ class Manejador(BaseHTTPRequestHandler):
         return funcion(*id_en_ruta, body, self.headers)
 
     def _atender(self, funcion):
+        # La prueba con hilos (prueba_http.py) manda este header: de esos pedidos
+        # se guarda una sola línea, para no llenar la terminal con 50 bloques.
+        carga = self.headers.get("X-Prueba-Carga") == "1"
+        self._body_pedido = ""
+        antes = None if carga else registro.foto()
+        registro.iniciar_captura()
+        error = None
         try:
             codigo, respuesta, extra = funcion()
         except ErrorHTTP as e:
-            codigo, respuesta, extra = e.codigo, {"codigo": e.codigo, "error": e.mensaje}, {}
+            codigo, respuesta, extra, error = e.codigo, {"codigo": e.codigo, "error": e.mensaje}, {}, e.mensaje
         except Exception as e:  # noqa: BLE001 - que un error inesperado no tire el servidor
-            codigo, respuesta, extra = 500, {"codigo": 500, "error": str(e)}, {}
+            codigo, respuesta, extra, error = 500, {"codigo": 500, "error": str(e)}, {}, str(e)
+        finally:
+            eventos = registro.terminar_captura()
+        cambios = [] if carga else registro.cambios(antes, registro.foto())
 
         datos = json.dumps(respuesta, ensure_ascii=False, indent=2).encode("utf-8")
+        self._headers_enviados = []
         self.send_response(codigo)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(datos)))
@@ -333,20 +382,23 @@ class Manejador(BaseHTTPRequestHandler):
             self.send_header(nombre, valor)
         self.end_headers()
         self.wfile.write(datos)
-        self._registrar(codigo, extra)
 
-    def _registrar(self, codigo, extra):
-        """Una línea por pedido en la terminal del servidor, para verlo en vivo."""
-        if self.silencioso:
-            return
-        col = "verde" if codigo < 300 else "amarillo" if codigo < 500 else "rojo"
-        clave = self.headers.get("Idempotency-Key")
-        detalle = f"  Idempotency-Key: {clave}" if clave else ""
-        if extra.get("Idempotent-Replayed"):
-            detalle += color("  (respuesta repetida)", "cian")
-        frase = HTTPStatus(codigo).phrase
-        print(f"  {self.command:<4} {self.path:<30} → {color(f'{codigo} {frase}', col, 'negrita')}{detalle}",
-              flush=True)
+        self._registrar(codigo, carga, eventos, cambios, datos.decode("utf-8"), error)
+
+    def _registrar(self, codigo, carga, eventos, cambios, body_respuesta, error):
+        """Arma el registro del pedido: lo imprime en la terminal y lo guarda para el panel."""
+        pedido = {
+            "numero": registro.nuevo_numero(), "hora": registro.ahora(), "carga": carga,
+            "metodo": self.command, "ruta": self.path.split("?")[0], "ruta_completa": self.path,
+            "version": self.request_version, "headers_pedido": list(self.headers.items()),
+            "body_pedido": self._body_pedido, "eventos": eventos, "cambios": cambios,
+            "codigo": codigo, "frase": HTTPStatus(codigo).phrase, "error": error,
+            "headers_respuesta": self._headers_enviados, "body_respuesta": body_respuesta,
+            "clave": self.headers.get("Idempotency-Key"),
+        }
+        registro.guardar(pedido)
+        if not self.silencioso:
+            registro.imprimir(pedido)
 
     def log_message(self, *args):  # reemplazado por _registrar
         pass
@@ -384,8 +436,12 @@ if __name__ == "__main__":
         print(color("  Si no, probá con otro puerto, por ejemplo en PowerShell:  $env:PORT=6000; py api.py", "gris"))
         print(color("  (y cambiá la variable baseUrl en Postman a ese puerto)\n", "gris"))
         raise SystemExit(1)
+    if os.name == "nt" and sys.stdout.isatty():
+        os.system(f"title API Grupo 2 · puerto {PORT}")   # el nombre de la ventana
     print(color(f"\n  API de la demo escuchando en http://{HOST}:{PORT}", "cian", "negrita"))
+    print(color(f"  Base de datos en vivo: http://127.0.0.1:{PORT}/panel", "cian"))
     print(color("  Probala con Postman (postman/Grupo2-demo.postman_collection.json) o con curl.", "gris"))
+    print(color("  Cada pedido aparece acá: ① pedido → ② lógica → ③ base de datos → ④ respuesta.", "gris"))
     print(color("  Ctrl+C para cortar.\n", "gris"))
     try:
         servidor.serve_forever()

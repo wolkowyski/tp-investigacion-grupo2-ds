@@ -11,15 +11,30 @@ Ejecutar:
     python main.py 3          directo al caso 3
     python main.py todos      los 5 casos seguidos
     python main.py --auto     sin pausas (para ensayar)
+
+Al arrancar, si no hay una API corriendo, la abre en su propia ventana (en Windows),
+y al final de cada caso sigue con la parte HTTP: Postman y los mismos pedidos por
+HTTP, muchos a la vez (prueba_http.py).
 """
+import os
+import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
+import webbrowser
 
 import caso1_idempotencia
 import caso2_deduplicacion
 import caso3_condicion_carrera
 import caso4_control_concurrencia
 import caso5_todo_junto
+import prueba_http
 from consola import AUTO, color, limpiar, pausa, tabla, titulo
+
+CARPETA = os.path.dirname(os.path.abspath(__file__))
+API = f"http://127.0.0.1:{os.environ.get('PORT', '5050')}"
+PANEL = API + "/panel"
 
 CASOS = {
     "1": ("Idempotencia", "Tema 9", "azul", caso1_idempotencia.demo),
@@ -49,12 +64,58 @@ def resumen():
     print()
 
 
-def aviso_postman(clave):
-    """Al final de cada caso: dónde seguir con la API HTTP (py api.py en otra terminal)."""
+# ==========================================================================
+# La API HTTP: se levanta sola y cada caso termina con su parte HTTP
+# ==========================================================================
+
+def api_activa():
+    try:
+        with urllib.request.urlopen(API + "/estado", timeout=0.6):   # /estado no se registra en la API
+            return True
+    except urllib.error.HTTPError:
+        return True    # respondió (aunque sea con un error): hay un servidor en ese puerto
+    except OSError:
+        return False
+
+
+def levantar_api():
+    """Si no hay una API corriendo, la abre en su propia ventana (solo en Windows).
+    Devuelve "ya estaba", "levantada" o None si no hay API."""
+    if api_activa():
+        return "ya estaba"
+    if os.name != "nt" or AUTO:
+        return None
+    entorno = {k: v for k, v in os.environ.items() if k != "DB_PATH"}   # la API usa su propia base: api.db
+    subprocess.Popen([sys.executable, "api.py"], cwd=CARPETA, env=entorno,
+                     creationflags=subprocess.CREATE_NEW_CONSOLE)
+    for _ in range(40):
+        time.sleep(0.15)
+        if api_activa():
+            return "levantada"
+    return None
+
+
+def linea_api(estado):
+    if estado:
+        detalle = "la abrí en otra ventana" if estado == "levantada" else "ya estaba corriendo"
+        print(color(f"   API HTTP en {API} ({detalle}) · base en vivo: {PANEL}", "gris"))
+    else:
+        print(color("   API HTTP: no está corriendo. Abrila en otra terminal con  py api.py  "
+                    "(o  docker compose up api).", "amarillo"))
+
+
+def parte_http(clave):
+    """Al final de cada caso: Postman y después los mismos pedidos por HTTP, muchos a la vez."""
     nombre = CASOS[clave][0]
     print()
     print(color(f"  ➜  Ahora como API real: en Postman, carpeta «Caso {clave} · {nombre}» (A y después B).", "cian", "negrita"))
-    print(color(f"     Con pedidos HTTP a la vez:  py prueba_http.py {clave}", "gris"))
+    if AUTO:
+        print(color(f"     Con pedidos HTTP a la vez:  py prueba_http.py {clave}", "gris"))
+        return
+    print(color("     Mientras mandás los pedidos, mirá la ventana de la API y el panel de la base.", "gris"))
+    pausa("Enter cuando termines con Postman → los mismos pedidos por HTTP, muchos a la vez")
+    print()
+    prueba_http.CASOS[clave](prueba_http.conectar_api(API))
 
 
 def correr(clave):
@@ -62,33 +123,42 @@ def correr(clave):
         for c in CASOS:
             limpiar()
             CASOS[c][3]()
-            aviso_postman(c)
+            parte_http(c)
             pausa("Enter para el siguiente caso")
         limpiar()
         resumen()
     elif clave in CASOS:
         limpiar()
         CASOS[clave][3]()
-        aviso_postman(clave)
+        parte_http(clave)
     elif clave in ("6", "resumen"):
         limpiar()
         resumen()
+    elif clave == "p":
+        webbrowser.open(PANEL)
 
 
-def menu():
+def menu(estado_api):
     while True:
         limpiar()
         titulo("Demo · Grupo 2 · Idempotencia y concurrencia", "cian")
+        linea_api(estado_api)
         print()
         for clave, (nombre, tema, col, _) in CASOS.items():
             print(f"   {color(clave, col, 'negrita')})  {nombre}  {color('· ' + tema, 'gris')}")
         print(f"   {color('6', 'gris', 'negrita')})  Resumen")
         print(f"   {color('t', 'cian', 'negrita')})  Todos seguidos")
+        print(f"   {color('p', 'cian', 'negrita')})  Abrir el panel de la base en el navegador")
         print(f"   {color('0', 'gris', 'negrita')})  Salir")
         print()
         opcion = input(color("   Elegí una opción: ", "negrita")).strip().lower()
         if opcion in ("0", "q", "salir"):
             break
+        if opcion == "p":
+            if not api_activa():
+                estado_api = levantar_api()
+            correr("p")
+            continue
         correr("todos" if opcion == "t" else opcion)
         print()
         pausa("Enter para volver al menú")
@@ -96,12 +166,15 @@ def menu():
 
 if __name__ == "__main__":
     argumentos = [a for a in sys.argv[1:] if not a.startswith("--")]
+    estado_api = levantar_api()
+    if estado_api == "levantada":
+        webbrowser.open(PANEL)   # la primera vez abre también el panel de la base
     try:
         if argumentos:
             correr(argumentos[0])
         elif AUTO:
             correr("todos")
         else:
-            menu()
+            menu(estado_api)
     except (KeyboardInterrupt, EOFError):
         print(color("\n  Demo terminada.", "gris"))

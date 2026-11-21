@@ -126,6 +126,38 @@ def test_asignaciones_un_exito_y_un_409(url):
     assert pedir(url, "GET", "/conductores/1")[1]["version"] == 1
 
 
+# ---------------- Registro y panel ----------------
+def test_panel_y_estado(url):
+    import urllib.request
+    with urllib.request.urlopen(url + "/panel") as r:
+        assert r.status == 200 and "text/html" in r.headers["Content-Type"]
+        assert b"base de datos en vivo" in r.read()
+    pedir(url, "POST", "/pagos", PAGO)
+    _, estado, _ = pedir(url, "GET", "/estado")
+    assert [t["nombre"] for t in estado["tablas"]] == ["conductores", "reservas", "idempotencia",
+                                                       "mensajes_procesados", "pagos"]
+    ultimo = estado["pedidos"][0]
+    assert ultimo["ruta"] == "/pagos" and ultimo["codigo"] == 200
+    assert ["funcion", "procesar_con_deduplicacion", "caso2_deduplicacion.py"] in ultimo["eventos"]
+    assert {(c["tabla"], c["tipo"]) for c in ultimo["cambios"]} == {
+        ("conductores", "UPDATE"), ("mensajes_procesados", "INSERT"), ("pagos", "INSERT")}
+
+
+def test_registro_muestra_el_sql_y_el_error_de_la_primary_key(url, capsys):
+    import registro
+    pedir(url, "POST", "/pagos", PAGO)
+    pedir(url, "POST", "/pagos", PAGO)
+    _, estado, _ = pedir(url, "GET", "/estado")
+    reentrega = estado["pedidos"][0]
+    eventos = [tuple(e) for e in reentrega["eventos"]]
+    assert ("sql", "INSERT INTO mensajes_procesados (id_mensaje) VALUES ('msg-V17')") in eventos
+    assert any(e[0] == "error" and "UNIQUE constraint failed" in e[1] for e in eventos)
+    assert ("sql", "ROLLBACK") in eventos and reentrega["cambios"] == []
+    registro.imprimir(reentrega)
+    salida = capsys.readouterr().out
+    assert "① PEDIDO" in salida and "④ RESPUESTA" in salida and "sin cambios" in salida
+
+
 # ---------------- Concurrencia por HTTP ----------------
 def test_http_50_acreditaciones_atomicas_a_la_vez(url):
     en_paralelo(url, [("POST", "/conductores/1/acreditar", {"monto": 100}, None)] * 50)

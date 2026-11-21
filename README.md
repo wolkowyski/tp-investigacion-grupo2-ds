@@ -76,19 +76,60 @@ Los mismos 5 casos, pero como endpoints HTTP de verdad, para ver en Postman los 
 python api.py                 # escucha en http://127.0.0.1:5050  (en Windows puede ser: py api.py)
 ```
 
-En la terminal del servidor aparece una línea por cada pedido (método, ruta, código y la Idempotency-Key). En Docker: `docker compose up api`.
+**No hace falta abrirla a mano:** en Windows, `python main.py` la abre sola en otra ventana si no está corriendo, y la primera vez abre también el panel de la base en el navegador. En Docker: `docker compose up api`. La API usa su propia base, `api.db`, separada de la de `main.py` (`demo.db`).
 
 ### Cómo se conecta con la demo de la terminal
 
-Cada caso se muestra en tres momentos, en este orden:
+Cada caso se muestra en tres momentos, todo desde el mismo `main.py`:
 
 | Momento | Dónde | Qué muestra |
 |---|---|---|
-| 1. Paso a paso | `python main.py N` | **Cómo** funciona por dentro: el intercalado, las tablas, la explicación |
-| 2. Como API real | Postman, carpeta **«Caso N»** → A) y después B) | Lo mismo como lo vería una app: pedido HTTP, header, JSON y código de estado |
-| 3. Pedidos a la vez | `python prueba_http.py N` | Lo mismo con muchos pedidos HTTP simultáneos |
+| 1. Paso a paso | `python main.py` → elegir el caso | **Cómo** funciona por dentro: el intercalado, las tablas, la explicación |
+| 2. Como API real | Postman, carpeta **«Caso N»** → A) y después B) | Lo mismo como lo vería una app: pedido HTTP, header, JSON y código de estado. En la ventana de la API y en el panel se ve qué pasó en el servidor y en la base |
+| 3. Pedidos a la vez | Enter en `main.py` (o `python prueba_http.py N`) | Lo mismo con muchos pedidos HTTP simultáneos |
 
-Al final de cada caso, `main.py` muestra qué carpeta de Postman sigue.
+Al final de cada caso, `main.py` dice qué carpeta de Postman sigue y, con Enter, corre la parte de pedidos a la vez.
+
+### La ventana de la API: el recorrido de cada pedido
+
+Por cada pedido, la API imprime un bloque con las cuatro etapas del recorrido cliente-servidor, siguiendo las capas de una aplicación de tres capas:
+
+```
+┌─ #3 · 22:30:13 · POST /pagos → 200 OK ─────────────────────────────
+│ ① PEDIDO  cliente → servidor · capa de presentación (Postman)
+│   POST /pagos HTTP/1.1
+│   Content-Type: application/json
+│   { "id_mensaje": "msg-V17", "conductor_id": 1, "monto": 1500 }
+│ ② LÓGICA  capa de aplicación · procesar_con_deduplicacion() en caso2_deduplicacion.py
+│   · recibe msg-V17: acreditar $1500 a Carlos
+│   SQL› BEGIN IMMEDIATE
+│   SQL› INSERT INTO mensajes_procesados (id_mensaje) VALUES ('msg-V17')
+│        ↳ ✘ IntegrityError: UNIQUE constraint failed: mensajes_procesados.id_mensaje
+│   SQL› ROLLBACK
+│   · msg-V17 YA FUE PROCESADO: se descarta, no se paga
+│ ③ BASE DE DATOS  capa de datos · api.db (SQLite)
+│   sin cambios
+│ ④ RESPUESTA  servidor → cliente
+│   HTTP/1.1 200 OK
+│   { "ack": "envía ACK (duplicado descartado)", "duplicado": true, "saldo": 11500 }
+└────────────────────────────────────────────────────────────────────
+```
+
+- **② Lógica:** los pasos (`·`) son los mismos textos de los `yield` que se ven en `main.py`: es el mismo código. El SQL lo informa el propio SQLite, con los valores reales, junto con cuántas filas tocó cada sentencia (`↳ 1 fila`) o por qué falló.
+- **③ Base de datos:** las filas que cambiaron (INSERT, UPDATE, DELETE), comparando las tablas antes y después del pedido.
+- Los pedidos de `prueba_http.py` (muchos a la vez) ocupan una sola línea cada uno.
+
+El código está en `registro.py` (solo presentación).
+
+### El panel: la base de datos en vivo
+
+`http://127.0.0.1:5050/panel` (o la opción `p` del menú de `main.py`) muestra la base `api.db` en el navegador y se actualiza sola cada 0,8 s:
+
+- **Las 5 tablas** con sus columnas, tipos y clave primaria, leídas de la base real con `PRAGMA table_info` y `SELECT *`. Nada está simulado: las filas nuevas se iluminan en verde y los valores que cambian en ámbar, con el valor anterior tachado (por ejemplo, el saldo de Carlos).
+- **El último pedido** con sus cuatro etapas, igual que en la ventana de la API.
+- **La lista de pedidos HTTP**: con un clic se ve la lógica, los cambios y la respuesta de cada uno.
+
+Es un solo archivo, `panel.html`, sin librerías ni internet. La API lo sirve en `/panel` y le da los datos en `/estado`.
 
 ### Endpoints por caso
 
@@ -128,18 +169,20 @@ pip install pytest
 python -m pytest -v
 ```
 
-Son 34 pruebas. Las 16 de `tests/test_casos.py` prueban cada caso con el mismo orden intercalado de la demo y con hilos reales. Las 18 de `tests/test_api.py` levantan la API y le mandan pedidos HTTP de verdad, también desde muchos hilos a la vez.
+Son 36 pruebas. Las 16 de `tests/test_casos.py` prueban cada caso con el mismo orden intercalado de la demo y con hilos reales. Las 20 de `tests/test_api.py` levantan la API y le mandan pedidos HTTP de verdad, también desde muchos hilos a la vez, y comprueban el registro y el panel.
 
 ## Cómo está armado el código
 
 | Archivo | Qué tiene |
 |---|---|
-| `main.py` | Menú y resumen |
+| `main.py` | Menú y resumen. Abre la API si no está corriendo y, al final de cada caso, sigue con la parte HTTP |
 | `caso1_…` a `caso5_…` | Arriba, **la lógica** que se explica (las funciones sin/con cada concepto). Abajo, la demo (solo textos y pantallas) |
 | `planificador.py` | Cómo se ejecutan los pedidos: paso a paso con Enter, o en hilos reales |
-| `db.py` | La base SQLite y sus tablas |
+| `db.py` | La base SQLite y sus tablas. Avisa cada sentencia SQL y su resultado a quien escuche (lo usa el registro de la API) |
 | `consola.py` | Colores, tablas y la línea de tiempo en columnas (solo presentación) |
 | `api.py` | La API HTTP: valida el pedido, llama a la función del caso y traduce el resultado a un código de estado |
+| `registro.py` | El registro de la API: captura los pasos y el SQL de cada pedido, compara la base antes y después, y lo imprime (solo presentación) |
+| `panel.html` | El panel de la base en vivo (lo sirve la API en `/panel`) |
 | `cliente_http.py` | Un cliente HTTP mínimo (como Postman, pero desde Python) y el envío de pedidos en paralelo |
 | `prueba_http.py` | La comprobación con hilos reales, por HTTP |
 | `postman/` | La colección de Postman |
