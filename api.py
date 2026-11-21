@@ -38,6 +38,10 @@ import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+# La API usa su propia base (api.db), para que correr main.py al mismo tiempo
+# no le borre los datos. Tiene que ir ANTES de importar db y los casos.
+os.environ.setdefault("DB_PATH", "api.db")
+
 from caso1_idempotencia import crear_reserva_sin_idempotencia
 from caso2_deduplicacion import procesar_con_deduplicacion, procesar_sin_deduplicacion
 from caso3_condicion_carrera import acreditar_ganancia, acreditar_ganancia_atomica
@@ -351,6 +355,9 @@ class Manejador(BaseHTTPRequestHandler):
 class Servidor(ThreadingHTTPServer):
     daemon_threads = True       # un hilo por pedido: los pedidos se atienden a la vez
     request_queue_size = 128    # conexiones en espera (por defecto son 5 y con 50 pedidos a la vez se pierden)
+    # En Windows, "reusar la dirección" deja que DOS servidores escuchen en el mismo puerto
+    # sin avisar, y los pedidos le llegan a uno cualquiera. Lo apagamos: la segunda API falla.
+    allow_reuse_address = os.name != "nt"
 
 
 def crear_servidor(host=HOST, port=PORT, silencioso=False):
@@ -373,7 +380,8 @@ if __name__ == "__main__":
         # En Windows, Hyper-V/Docker reservan rangos de puertos (WinError 10013) y
         # a veces el puerto ya está en uso (WinError 10048 / EADDRINUSE).
         print(color(f"\n  No se pudo usar el puerto {PORT}: {e}", "rojo", "negrita"))
-        print(color("  Probá con otro, por ejemplo en PowerShell:  $env:PORT=6000; python api.py", "gris"))
+        print(color("  ¿Ya hay otra API corriendo en otra terminal? Cerrala (Ctrl+C) y volvé a probar.", "gris"))
+        print(color("  Si no, probá con otro puerto, por ejemplo en PowerShell:  $env:PORT=6000; py api.py", "gris"))
         print(color("  (y cambiá la variable baseUrl en Postman a ese puerto)\n", "gris"))
         raise SystemExit(1)
     print(color(f"\n  API de la demo escuchando en http://{HOST}:{PORT}", "cian", "negrita"))
