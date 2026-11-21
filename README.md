@@ -19,6 +19,20 @@ Escenario de todos los casos: la plataforma de movilidad del TPI (pasajeros que 
 
 Cada caso termina con una **comprobación con hilos reales** (20 a 50 pedidos a la vez, sin pausas) para mostrar que el problema aparece solo y que la solución lo resuelve.
 
+## Qué técnica usa cada caso: ventajas, desventajas y cuándo no usarla
+
+| Caso | Técnica | Ventaja | Desventaja (se ve en la demo) | Cuándo no usarla |
+|---|---|---|---|---|
+| 1 | Idempotency-Key (clave como PRIMARY KEY) | Reintentar es seguro: un solo efecto y siempre la misma respuesta | Hay que guardar claves y respuestas, y purgarlas (TTL) | GET, PUT o DELETE, que ya son idempotentes, o si los datos ya identifican la operación (alcanza un UNIQUE) |
+| 2 | Deduplicación por id del mensaje | La cola puede reentregar sin pagar dos veces | La tabla `mensajes_procesados` crece: hace falta una ventana de deduplicación | Si la operación ya es idempotente, si un duplicado no importa o si el mensaje no tiene un id estable |
+| 3 | Operación atómica (`saldo = saldo + ?`) | No hay ventana entre leer y escribir, sin esperas | Solo sirve si el cálculo se puede hacer en SQL | Si la decisión depende de lógica en la aplicación |
+| 4 | Bloqueo optimista (columna `version`) | No bloquea a nadie; detecta el conflicto al escribir | 19 de 20 pedidos reciben 409 y el cliente tiene que manejarlo | Con mucha competencia por el mismo recurso: conviene el bloqueo pesimista (`SELECT … FOR UPDATE`) |
+| 5 | Idempotencia + bloqueo optimista | Cada mecanismo cubre un problema distinto: reintentos de la misma intención e intenciones que compiten | Suma la complejidad de los dos | — |
+
+Una condición de carrera (caso 3, parte B) no es una técnica sino el problema: aparece cuando hay un dato compartido, acceso concurrente y al menos una escritura. Si falta uno de los tres, no hay carrera.
+
+La teoría completa y la relación con el TPI están en el informe y la presentación del grupo.
+
 ## Requisitos
 
 Solo **Python 3.10 o superior**. No hay que instalar nada más: la base de datos es SQLite, que viene con Python.
@@ -54,6 +68,100 @@ docker compose run --rm demo
 
 Construye la imagen la primera vez y abre la demo en la terminal. Se usa `run` (y no `up`) para que la terminal quede conectada y funcionen los Enter. Para ir directo a un caso: `docker compose run --rm demo python main.py 3`.
 
+## La API HTTP (para probar con Postman)
+
+Los mismos 5 casos, pero como endpoints HTTP de verdad, para ver en Postman los métodos, los headers, el body JSON y los códigos de estado reales. **No hay lógica nueva:** cada endpoint llama a la misma función del caso. Usa solo la biblioteca estándar de Python (`http.server`).
+
+```bash
+python api.py                 # escucha en http://127.0.0.1:5050  (en Windows puede ser: py api.py)
+```
+
+**No hace falta abrirla a mano:** en Windows, `python main.py` la abre sola en otra ventana si no está corriendo, y la primera vez abre también el panel de la base en el navegador. En Docker: `docker compose up api`. La API usa su propia base, `api.db`, separada de la de `main.py` (`demo.db`).
+
+### Cómo se conecta con la demo de la terminal
+
+Cada caso se muestra en tres momentos, todo desde el mismo `main.py`:
+
+| Momento | Dónde | Qué muestra |
+|---|---|---|
+| 1. Paso a paso | `python main.py` → elegir el caso | **Cómo** funciona por dentro: el intercalado, las tablas, la explicación |
+| 2. Como API real | Postman, carpeta **«Caso N»** → A) y después B) | Lo mismo como lo vería una app: pedido HTTP, header, JSON y código de estado. En la ventana de la API y en el panel se ve qué pasó en el servidor y en la base |
+| 3. Pedidos a la vez | Enter en `main.py` (o `python prueba_http.py N`) | Lo mismo con muchos pedidos HTTP simultáneos |
+
+Al final de cada caso, `main.py` dice qué carpeta de Postman sigue y, con Enter, corre la parte de pedidos a la vez.
+
+### La ventana de la API: el recorrido de cada pedido
+
+Por cada pedido, la API imprime un bloque con las cuatro etapas del recorrido cliente-servidor, siguiendo las capas de una aplicación de tres capas:
+
+```
+┌─ #3 · 22:30:13 · POST /pagos → 200 OK ─────────────────────────────
+│ ① PEDIDO  cliente → servidor · capa de presentación (Postman)
+│   POST /pagos HTTP/1.1
+│   Content-Type: application/json
+│   { "id_mensaje": "msg-V17", "conductor_id": 1, "monto": 1500 }
+│ ② LÓGICA  capa de aplicación · procesar_con_deduplicacion() en caso2_deduplicacion.py
+│   · recibe msg-V17: acreditar $1500 a Carlos
+│   SQL› BEGIN IMMEDIATE
+│   SQL› INSERT INTO mensajes_procesados (id_mensaje) VALUES ('msg-V17')
+│        ↳ ✘ IntegrityError: UNIQUE constraint failed: mensajes_procesados.id_mensaje
+│   SQL› ROLLBACK
+│   · msg-V17 YA FUE PROCESADO: se descarta, no se paga
+│ ③ BASE DE DATOS  capa de datos · api.db (SQLite)
+│   sin cambios
+│ ④ RESPUESTA  servidor → cliente
+│   HTTP/1.1 200 OK
+│   { "ack": "envía ACK (duplicado descartado)", "duplicado": true, "saldo": 11500 }
+└────────────────────────────────────────────────────────────────────
+```
+
+- **② Lógica:** los pasos (`·`) son los mismos textos de los `yield` que se ven en `main.py`: es el mismo código. El SQL lo informa el propio SQLite, con los valores reales, junto con cuántas filas tocó cada sentencia (`↳ 1 fila`) o por qué falló.
+- **③ Base de datos:** las filas que cambiaron (INSERT, UPDATE, DELETE), comparando las tablas antes y después del pedido.
+- Los pedidos de `prueba_http.py` (muchos a la vez) ocupan una sola línea cada uno.
+
+El código está en `registro.py` (solo presentación).
+
+### El panel: la base de datos en vivo
+
+`http://127.0.0.1:5050/panel` (o la opción `p` del menú de `main.py`) muestra la base `api.db` en el navegador y se actualiza sola cada 0,8 s:
+
+- **Las 5 tablas** con sus columnas, tipos y clave primaria, leídas de la base real con `PRAGMA table_info` y `SELECT *`. Nada está simulado: las filas nuevas se iluminan en verde y los valores que cambian en ámbar, con el valor anterior tachado (por ejemplo, el saldo de Carlos).
+- **El último pedido** con sus cuatro etapas, igual que en la ventana de la API.
+- **La lista de pedidos HTTP**: con un clic se ve la lógica, los cambios y la respuesta de cada uno.
+
+Es un solo archivo, `panel.html`, sin librerías ni internet. La API lo sirve en `/panel` y le da los datos en `/estado`.
+
+### Endpoints por caso
+
+| Caso | A) sin el concepto | B) con el concepto | Qué se ve en Postman |
+|---|---|---|---|
+| 1 · Idempotencia | `POST /reservas/sin-idempotencia` | `POST /reservas` + header `Idempotency-Key` | A: 2 reservas. B: **201**, el reintento **201** con la misma reserva y el header `Idempotent-Replayed: true`, **422** misma clave con otros datos, **400** sin la clave |
+| 2 · Deduplicación | `POST /pagos/sin-deduplicacion` | `POST /pagos` | A: cobra 2 veces ($13000). B: la reentrega se descarta (`"duplicado": true`, $11500) |
+| 3 · Condición de carrera | `POST /conductores/{id}/acreditar/sin-control` | `POST /conductores/{id}/acreditar` | De a un pedido los dos dan bien ($13500): la carrera se ve con `prueba_http.py 3` |
+| 4 · Control de concurrencia | `POST /asignaciones/sin-control` | `POST /asignaciones` | B: Ana **201**, Beto **409** y la versión de Carlos pasa de 0 a 1. La doble asignación de A se ve con `prueba_http.py 4` |
+| 5 · Todo junto | — | `POST /reservas` + header `Idempotency-Key` | Ana **201** en sus 2 intentos y Beto **409** en los 2; 1 sola reserva |
+
+`POST /reservas` llama a `reservar()` del caso 5, que adentro tiene la idempotencia del caso 1 y el bloqueo optimista del caso 4. Consultas: `GET /conductores`, `GET /conductores/{id}` (**404** si no existe), `GET /reservas`, `GET /reservas/{id}`. `POST /reset` deja la base como al principio.
+
+### Postman
+
+Importar `postman/Grupo2-demo.postman_collection.json` (Import, o arrastrar el archivo a la ventana). Las carpetas son las mismas que el menú de `main.py`: **Caso 1** a **Caso 5**, cada una con A) y B). Cada carpeta empieza con «Reiniciar la base», así que se puede correr cualquiera sola: un **Send** por pedido, de arriba a abajo. Cada pedido tiene un test que marca en verde lo esperado; con **Run** se corre una carpeta o la colección entera.
+
+Al abrir la carpeta del repositorio en Postman, la app crea `.postman/` y archivos dentro de `postman/`: son configuración local y están en el `.gitignore`.
+
+### Pedidos a la vez: `prueba_http.py`
+
+Postman manda los pedidos de a uno (también el Collection Runner): por eso en los casos 3 y 4 la parte A da bien en Postman. Sin acceso concurrente no hay carrera. Para pedidos HTTP simultáneos:
+
+```bash
+python prueba_http.py         # los 5 casos
+python prueba_http.py 3       # solo el caso 3: 50 acreditaciones a la vez
+```
+
+Usa la API que está corriendo; si no hay ninguna, levanta una propia.
+
+**Si el puerto está bloqueado** (en Windows, Hyper-V y Docker reservan rangos de puertos y aparece `WinError 10013`): `$env:PORT=6000; python api.py` en PowerShell, y cambiar la variable `baseUrl` de la colección a ese puerto. Para ver los rangos reservados: `netsh interface ipv4 show excludedportrange protocol=tcp`.
+
 ## Pruebas automáticas
 
 ```bash
@@ -61,17 +169,24 @@ pip install pytest
 python -m pytest -v
 ```
 
-Son 15 pruebas: cada caso se prueba con el mismo orden intercalado de la demo y con hilos reales.
+Son 36 pruebas. Las 16 de `tests/test_casos.py` prueban cada caso con el mismo orden intercalado de la demo y con hilos reales. Las 20 de `tests/test_api.py` levantan la API y le mandan pedidos HTTP de verdad, también desde muchos hilos a la vez, y comprueban el registro y el panel.
 
 ## Cómo está armado el código
 
 | Archivo | Qué tiene |
 |---|---|
-| `main.py` | Menú y resumen |
+| `main.py` | Menú y resumen. Abre la API si no está corriendo y, al final de cada caso, sigue con la parte HTTP |
 | `caso1_…` a `caso5_…` | Arriba, **la lógica** que se explica (las funciones sin/con cada concepto). Abajo, la demo (solo textos y pantallas) |
 | `planificador.py` | Cómo se ejecutan los pedidos: paso a paso con Enter, o en hilos reales |
-| `db.py` | La base SQLite y sus tablas |
+| `db.py` | La base SQLite y sus tablas. Avisa cada sentencia SQL y su resultado a quien escuche (lo usa el registro de la API) |
 | `consola.py` | Colores, tablas y la línea de tiempo en columnas (solo presentación) |
+| `api.py` | La API HTTP: valida el pedido, llama a la función del caso y traduce el resultado a un código de estado |
+| `registro.py` | El registro de la API: captura los pasos y el SQL de cada pedido, compara la base antes y después, y lo imprime (solo presentación) |
+| `panel.html` | El panel de la base en vivo (lo sirve la API en `/panel`) |
+| `cliente_http.py` | Un cliente HTTP mínimo (como Postman, pero desde Python) y el envío de pedidos en paralelo |
+| `prueba_http.py` | La comprobación con hilos reales, por HTTP |
+| `postman/` | La colección de Postman |
+| `tests/` | `test_casos.py` (los 5 casos) y `test_api.py` (la API) |
 
 **Por qué los pedidos tienen `yield`:** cada pedido es una función generadora. Cada `yield` es un punto donde el pedido se pausa y donde, en un sistema real, otro pedido podría meterse en el medio. Eso permite elegir el orden y ver el intercalado paso a paso. Las operaciones contra la base son reales; lo único que se controla es el orden, como en un depurador. La comprobación con hilos reales muestra lo mismo sin controlar nada.
 

@@ -1,3 +1,9 @@
 __pycache__/
 .pytest_cache/
 *.db
+
+# Archivos que crea la app de Postman al abrir esta carpeta (configuración local de cada uno).
+# Del directorio postman/ solo se versiona la colección.
+.postman/
+postman/*
+!postman/Grupo2-demo.postman_collection.json

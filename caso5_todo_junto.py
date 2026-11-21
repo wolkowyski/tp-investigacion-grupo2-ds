@@ -45,8 +45,11 @@ def reservar(clave, pasajero, conductor_id):
         yield "la clave YA EXISTE: es un reintento"
         while True:
             fila = con.execute(
-                "SELECT respuesta FROM idempotencia "
+                "SELECT datos, respuesta FROM idempotencia "
                 "WHERE clave = ?", (clave,)).fetchone()
+            if fila["datos"] != datos:
+                yield "pero los datos son OTROS: se rechaza"
+                return {"codigo": 422, "error": "datos distintos"}
             if fila["respuesta"]:
                 yield "devuelve la MISMA respuesta del primero"
                 respuesta = json.loads(fila["respuesta"])

@@ -7,6 +7,6 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONIOENCODING=utf-8 \
     DB_PATH=/tmp/demo.db
 
-COPY *.py ./
+COPY *.py panel.html ./
 
 CMD ["python", "main.py"]

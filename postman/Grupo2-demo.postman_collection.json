@@ -1,0 +1,1604 @@
+{
+  "info": {
+    "name": "Grupo 2 · Idempotencia y concurrencia",
+    "description": "Los mismos 5 casos de main.py, como pedidos HTTP a la API (py api.py). Cada caso tiene A) sin el concepto y B) con el concepto. Cada carpeta empieza con 'Reiniciar la base': correla de arriba a abajo, un Send por pedido.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:5050"
+    }
+  ],
+  "item": [
+    {
+      "name": "Caso 1 · Idempotencia",
+      "description": "py main.py 1  ·  con hilos: py prueba_http.py 1",
+      "item": [
+        {
+          "name": "A) Sin idempotencia",
+          "description": "",
+          "item": [
+            {
+              "name": "Reiniciar la base",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "reset"
+                  ]
+                },
+                "description": "Deja a Carlos y Diana disponibles, versión 0 y saldo $10000. Mandalo siempre primero.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Ana reserva",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/reservas/sin-idempotencia",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "reservas",
+                    "sin-idempotencia"
+                  ]
+                },
+                "description": "",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"pasajero\": \"Ana\",\n  \"conductor_id\": 1\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 201\", () => pm.response.to.have.status(201));",
+                      "pm.test(\"reserva #1\", () => { pm.expect(pm.response.json().reserva_id).to.eql(1); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "La app de Ana REINTENTA",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/reservas/sin-idempotencia",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "reservas",
+                    "sin-idempotencia"
+                  ]
+                },
+                "description": "Mismo pedido otra vez: el servidor no sabe que es un reintento y crea otra reserva.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"pasajero\": \"Ana\",\n  \"conductor_id\": 1\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 201\", () => pm.response.to.have.status(201));",
+                      "pm.test(\"reserva #2\", () => { pm.expect(pm.response.json().reserva_id).to.eql(2); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Ver reservas: hay 2",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/reservas",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "reservas"
+                  ]
+                },
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"2 reserva(s)\", () => { pm.expect(pm.response.json().length).to.eql(2); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "B) Con Idempotency-Key",
+          "description": "",
+          "item": [
+            {
+              "name": "Reiniciar la base",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "reset"
+                  ]
+                },
+                "description": "Deja a Carlos y Diana disponibles, versión 0 y saldo $10000. Mandalo siempre primero.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Ana reserva (clave ana-caso1)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "ana-caso1"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/reservas",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "reservas"
+                  ]
+                },
+                "description": "Mirá la pestaña Headers del pedido: va la Idempotency-Key.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"pasajero\": \"Ana\",\n  \"conductor_id\": 1\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 201\", () => pm.response.to.have.status(201));",
+                      "pm.test(\"reserva #1\", () => { pm.expect(pm.response.json().reserva_id).to.eql(1); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "La app de Ana REINTENTA con la misma clave",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "ana-caso1"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/reservas",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "reservas"
+                  ]
+                },
+                "description": "Misma clave: devuelve la MISMA respuesta y no crea nada. En los Headers de la respuesta aparece Idempotent-Replayed: true.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"pasajero\": \"Ana\",\n  \"conductor_id\": 1\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 201\", () => pm.response.to.have.status(201));",
+                      "pm.test(\"misma reserva #1\", () => { pm.expect(pm.response.json().reserva_id).to.eql(1); });",
+                      "pm.test(\"header Idempotent-Replayed: true\", () => pm.response.to.have.header(\"Idempotent-Replayed\", \"true\"));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Misma clave con OTRO conductor (422)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "ana-caso1"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/reservas",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "reservas"
+                  ]
+                },
+                "description": "Reutilizó la clave para otra intención: error del cliente.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"pasajero\": \"Ana\",\n  \"conductor_id\": 2\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 422\", () => pm.response.to.have.status(422));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Sin el header Idempotency-Key (400)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/reservas",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "reservas"
+                  ]
+                },
+                "description": "Sin clave el servidor no puede reconocer los reintentos: lo rechaza.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"pasajero\": \"Ana\",\n  \"conductor_id\": 1\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 400\", () => pm.response.to.have.status(400));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Ver reservas: hay 1",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/reservas",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "reservas"
+                  ]
+                },
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"1 reserva(s)\", () => { pm.expect(pm.response.json().length).to.eql(1); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Caso 2 · Deduplicación",
+      "description": "py main.py 2  ·  con hilos: py prueba_http.py 2",
+      "item": [
+        {
+          "name": "A) Sin deduplicación",
+          "description": "",
+          "item": [
+            {
+              "name": "Reiniciar la base",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "reset"
+                  ]
+                },
+                "description": "Deja a Carlos y Diana disponibles, versión 0 y saldo $10000. Mandalo siempre primero.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "La cola entrega msg-V17",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/pagos/sin-deduplicacion",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "pagos",
+                    "sin-deduplicacion"
+                  ]
+                },
+                "description": "",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"id_mensaje\": \"msg-V17\",\n  \"conductor_id\": 1,\n  \"monto\": 1500\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"saldo $11500\", () => { pm.expect(pm.response.json().saldo).to.eql(11500); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "El ACK se perdió: la cola REENTREGA msg-V17",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/pagos/sin-deduplicacion",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "pagos",
+                    "sin-deduplicacion"
+                  ]
+                },
+                "description": "",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"id_mensaje\": \"msg-V17\",\n  \"conductor_id\": 1,\n  \"monto\": 1500\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"Carlos cobró DOS veces: $13000\", () => { pm.expect(pm.response.json().saldo).to.eql(13000); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "B) Con deduplicación",
+          "description": "",
+          "item": [
+            {
+              "name": "Reiniciar la base",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "reset"
+                  ]
+                },
+                "description": "Deja a Carlos y Diana disponibles, versión 0 y saldo $10000. Mandalo siempre primero.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "La cola entrega msg-V17",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/pagos",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "pagos"
+                  ]
+                },
+                "description": "",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"id_mensaje\": \"msg-V17\",\n  \"conductor_id\": 1,\n  \"monto\": 1500\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"se paga (no es duplicado)\", () => { pm.expect(pm.response.json().duplicado).to.eql(false); });",
+                      "pm.test(\"saldo $11500\", () => { pm.expect(pm.response.json().saldo).to.eql(11500); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "El ACK se perdió: la cola REENTREGA msg-V17",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/pagos",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "pagos"
+                  ]
+                },
+                "description": "Responde 200 igual: es el ACK, para que la cola deje de reentregar.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"id_mensaje\": \"msg-V17\",\n  \"conductor_id\": 1,\n  \"monto\": 1500\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"se descarta (duplicado)\", () => { pm.expect(pm.response.json().duplicado).to.eql(true); });",
+                      "pm.test(\"Carlos cobró UNA vez: $11500\", () => { pm.expect(pm.response.json().saldo).to.eql(11500); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Caso 3 · Condición de carrera",
+      "description": "py main.py 3  ·  con hilos: py prueba_http.py 3",
+      "item": [
+        {
+          "name": "A) Leer, calcular y escribir por separado",
+          "description": "",
+          "item": [
+            {
+              "name": "Reiniciar la base",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "reset"
+                  ]
+                },
+                "description": "Deja a Carlos y Diana disponibles, versión 0 y saldo $10000. Mandalo siempre primero.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Viaje 1: acreditar $1500",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/conductores/1/acreditar/sin-control",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "conductores",
+                    "1",
+                    "acreditar",
+                    "sin-control"
+                  ]
+                },
+                "description": "",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"monto\": 1500\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"saldo $11500\", () => { pm.expect(pm.response.json().saldo).to.eql(11500); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Viaje 2: acreditar $2000",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/conductores/1/acreditar/sin-control",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "conductores",
+                    "1",
+                    "acreditar",
+                    "sin-control"
+                  ]
+                },
+                "description": "Postman manda de a UN pedido: no hay acceso concurrente, así que no hay carrera. La carrera aparece con pedidos a la vez: py prueba_http.py 3",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"monto\": 2000\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"en serie da bien: $13500\", () => { pm.expect(pm.response.json().saldo).to.eql(13500); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "B) Operación atómica (saldo = saldo + ?)",
+          "description": "",
+          "item": [
+            {
+              "name": "Reiniciar la base",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "reset"
+                  ]
+                },
+                "description": "Deja a Carlos y Diana disponibles, versión 0 y saldo $10000. Mandalo siempre primero.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Viaje 1: acreditar $1500",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/conductores/1/acreditar",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "conductores",
+                    "1",
+                    "acreditar"
+                  ]
+                },
+                "description": "",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"monto\": 1500\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"saldo $11500\", () => { pm.expect(pm.response.json().saldo).to.eql(11500); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Viaje 2: acreditar $2000",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/conductores/1/acreditar",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "conductores",
+                    "1",
+                    "acreditar"
+                  ]
+                },
+                "description": "",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"monto\": 2000\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"saldo $13500\", () => { pm.expect(pm.response.json().saldo).to.eql(13500); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Caso 4 · Control de concurrencia",
+      "description": "py main.py 4  ·  con hilos: py prueba_http.py 4",
+      "item": [
+        {
+          "name": "A) Sin control",
+          "description": "",
+          "item": [
+            {
+              "name": "Reiniciar la base",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "reset"
+                  ]
+                },
+                "description": "Deja a Carlos y Diana disponibles, versión 0 y saldo $10000. Mandalo siempre primero.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Ana pide a Carlos",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/asignaciones/sin-control",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "asignaciones",
+                    "sin-control"
+                  ]
+                },
+                "description": "",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"pasajero\": \"Ana\",\n  \"conductor_id\": 1\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 201\", () => pm.response.to.have.status(201));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Beto pide a Carlos",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/asignaciones/sin-control",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "asignaciones",
+                    "sin-control"
+                  ]
+                },
+                "description": "De a uno, Beto ya ve a Carlos ocupado. La doble asignación aparece cuando los dos leen 'disponible' a la vez: py prueba_http.py 4",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"pasajero\": \"Beto\",\n  \"conductor_id\": 1\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 409\", () => pm.response.to.have.status(409));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "B) Con bloqueo optimista (columna version)",
+          "description": "",
+          "item": [
+            {
+              "name": "Reiniciar la base",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "reset"
+                  ]
+                },
+                "description": "Deja a Carlos y Diana disponibles, versión 0 y saldo $10000. Mandalo siempre primero.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Ver a Carlos: versión 0",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/conductores/1",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "conductores",
+                    "1"
+                  ]
+                },
+                "description": ""
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"versión 0, disponible\", () => { const c = pm.response.json(); pm.expect(c.version).to.eql(0); pm.expect(c.disponible).to.eql(1); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Ana pide a Carlos",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/asignaciones",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "asignaciones"
+                  ]
+                },
+                "description": "",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"pasajero\": \"Ana\",\n  \"conductor_id\": 1\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 201\", () => pm.response.to.have.status(201));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Beto pide a Carlos (409)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/asignaciones",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "asignaciones"
+                  ]
+                },
+                "description": "",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"pasajero\": \"Beto\",\n  \"conductor_id\": 1\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 409\", () => pm.response.to.have.status(409));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Ver a Carlos: versión 1",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/conductores/1",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "conductores",
+                    "1"
+                  ]
+                },
+                "description": "El UPDATE de Ana subió la versión de 0 a 1."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"responde 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"versión 1, no disponible\", () => { const c = pm.response.json(); pm.expect(c.version).to.eql(1); pm.expect(c.disponible).to.eql(0); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Caso 5 · Todo junto",
+      "description": "py main.py 5  ·  con hilos: py prueba_http.py 5",
+      "item": [
+        {
+          "name": "Reiniciar la base",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/reset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reset"
+              ]
+            },
+            "description": "Deja a Carlos y Diana disponibles, versión 0 y saldo $10000. Mandalo siempre primero.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"responde 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ana pide a Carlos (clave ana-caso5)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "ana-caso5"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/reservas",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reservas"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pasajero\": \"Ana\",\n  \"conductor_id\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"responde 201\", () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Beto pide a Carlos (clave beto-caso5)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "beto-caso5"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/reservas",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reservas"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pasajero\": \"Beto\",\n  \"conductor_id\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"responde 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "La app de Ana REINTENTA",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "ana-caso5"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/reservas",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reservas"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pasajero\": \"Ana\",\n  \"conductor_id\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"responde 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"misma reserva #1\", () => { pm.expect(pm.response.json().reserva_id).to.eql(1); });",
+                  "pm.test(\"header Idempotent-Replayed: true\", () => pm.response.to.have.header(\"Idempotent-Replayed\", \"true\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "La app de Beto REINTENTA",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "beto-caso5"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/reservas",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reservas"
+              ]
+            },
+            "description": "El 409 también quedó guardado con la clave: el reintento recibe la misma respuesta.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pasajero\": \"Beto\",\n  \"conductor_id\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"responde 409\", () => pm.response.to.have.status(409));",
+                  "pm.test(\"header Idempotent-Replayed: true\", () => pm.response.to.have.header(\"Idempotent-Replayed\", \"true\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ver reservas: hay 1",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/reservas",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reservas"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"responde 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"1 reserva(s)\", () => { pm.expect(pm.response.json().length).to.eql(1); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

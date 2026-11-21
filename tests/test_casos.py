@@ -127,6 +127,14 @@ def test_todo_junto_una_reserva_y_respuestas_coherentes():
     assert sorted([r["a1"]["codigo"], r["b1"]["codigo"]]) == [201, 409]
 
 
+def test_todo_junto_misma_clave_con_otros_datos_se_rechaza():
+    from caso5_todo_junto import reservar
+    intercalar({"a": reservar("k-ana", "Ana", 1)})
+    r = intercalar({"b": reservar("k-ana", "Ana", 2)})
+    assert r["b"]["codigo"] == 422
+    assert reservas() == 1
+
+
 def test_todo_junto_con_hilos_reales():
     from caso5_todo_junto import reservar
     pedidos = [(i, reservar(f"k{i}", f"P{i}", 1)) for i in range(5) for _ in range(3)]
