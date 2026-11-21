@@ -70,30 +70,51 @@ Construye la imagen la primera vez y abre la demo en la terminal. Se usa `run` (
 
 ## La API HTTP (para probar con Postman)
 
-Los mismos casos, pero como endpoints HTTP de verdad, para ver en Postman los métodos, los headers, el body JSON y los códigos de estado reales. **No hay lógica nueva:** cada endpoint llama a la misma función del caso (`reservar()` del caso 5, `procesar_con_deduplicacion()` del caso 2). Usa solo la biblioteca estándar de Python (`http.server`).
+Los mismos 5 casos, pero como endpoints HTTP de verdad, para ver en Postman los métodos, los headers, el body JSON y los códigos de estado reales. **No hay lógica nueva:** cada endpoint llama a la misma función del caso. Usa solo la biblioteca estándar de Python (`http.server`).
 
 ```bash
-python api.py                 # escucha en http://127.0.0.1:5050
+python api.py                 # escucha en http://127.0.0.1:5050  (en Windows puede ser: py api.py)
 ```
 
 En la terminal del servidor aparece una línea por cada pedido (método, ruta, código y la Idempotency-Key). En Docker: `docker compose up api`.
 
-| Endpoint | Caso | Qué responde |
+### Cómo se conecta con la demo de la terminal
+
+Cada caso se muestra en tres momentos, en este orden:
+
+| Momento | Dónde | Qué muestra |
 |---|---|---|
-| `GET /conductores/{id}` | — | **200** con `disponible`, `version` y `saldo`; **404** si no existe |
-| `GET /reservas` | — | **200** con la lista de reservas |
-| `POST /reservas` + header `Idempotency-Key` | 5 (idempotencia + bloqueo optimista) | **201** la primera vez; **201** con la misma reserva y el header `Idempotent-Replayed: true` en un reintento; **422** con la misma clave y otros datos; **409** si Carlos ya está asignado; **400** sin el header |
-| `POST /reservas/sin-idempotencia` | 1, parte A | **201** y una reserva nueva en cada pedido |
-| `POST /pagos` | 2 (deduplicación) | **200** (el ACK); la reentrega del mismo `id_mensaje` se descarta (`"duplicado": true`) |
-| `POST /pagos/sin-deduplicacion` | 2, parte A | **200** y paga en cada entrega |
-| `POST /reset` | — | Deja la base como al principio |
+| 1. Paso a paso | `python main.py N` | **Cómo** funciona por dentro: el intercalado, las tablas, la explicación |
+| 2. Como API real | Postman, carpeta **«Caso N»** → A) y después B) | Lo mismo como lo vería una app: pedido HTTP, header, JSON y código de estado |
+| 3. Pedidos a la vez | `python prueba_http.py N` | Lo mismo con muchos pedidos HTTP simultáneos |
 
-**Postman:** importar `postman/Grupo2-demo.postman_collection.json` (Import → arrastrar el archivo) y correr los pedidos en orden, de arriba a abajo. Cada uno tiene un test que marca en verde el código esperado; con **Run collection** se corren todos de una vez.
+Al final de cada caso, `main.py` muestra qué carpeta de Postman sigue.
 
-**La concurrencia no se ve en Postman:** el Collection Runner manda los pedidos de a uno. Para pedidos simultáneos por HTTP:
+### Endpoints por caso
+
+| Caso | A) sin el concepto | B) con el concepto | Qué se ve en Postman |
+|---|---|---|---|
+| 1 · Idempotencia | `POST /reservas/sin-idempotencia` | `POST /reservas` + header `Idempotency-Key` | A: 2 reservas. B: **201**, el reintento **201** con la misma reserva y el header `Idempotent-Replayed: true`, **422** misma clave con otros datos, **400** sin la clave |
+| 2 · Deduplicación | `POST /pagos/sin-deduplicacion` | `POST /pagos` | A: cobra 2 veces ($13000). B: la reentrega se descarta (`"duplicado": true`, $11500) |
+| 3 · Condición de carrera | `POST /conductores/{id}/acreditar/sin-control` | `POST /conductores/{id}/acreditar` | De a un pedido los dos dan bien ($13500): la carrera se ve con `prueba_http.py 3` |
+| 4 · Control de concurrencia | `POST /asignaciones/sin-control` | `POST /asignaciones` | B: Ana **201**, Beto **409** y la versión de Carlos pasa de 0 a 1. La doble asignación de A se ve con `prueba_http.py 4` |
+| 5 · Todo junto | — | `POST /reservas` + header `Idempotency-Key` | Ana **201** en sus 2 intentos y Beto **409** en los 2; 1 sola reserva |
+
+`POST /reservas` llama a `reservar()` del caso 5, que adentro tiene la idempotencia del caso 1 y el bloqueo optimista del caso 4. Consultas: `GET /conductores`, `GET /conductores/{id}` (**404** si no existe), `GET /reservas`, `GET /reservas/{id}`. `POST /reset` deja la base como al principio.
+
+### Postman
+
+Importar `postman/Grupo2-demo.postman_collection.json` (Import, o arrastrar el archivo a la ventana). Las carpetas son las mismas que el menú de `main.py`: **Caso 1** a **Caso 5**, cada una con A) y B). Cada carpeta empieza con «Reiniciar la base», así que se puede correr cualquiera sola: un **Send** por pedido, de arriba a abajo. Cada pedido tiene un test que marca en verde lo esperado; con **Run** se corre una carpeta o la colección entera.
+
+Al abrir la carpeta del repositorio en Postman, la app crea `.postman/` y archivos dentro de `postman/`: son configuración local y están en el `.gitignore`.
+
+### Pedidos a la vez: `prueba_http.py`
+
+Postman manda los pedidos de a uno (también el Collection Runner): por eso en los casos 3 y 4 la parte A da bien en Postman. Sin acceso concurrente no hay carrera. Para pedidos HTTP simultáneos:
 
 ```bash
-python prueba_http.py         # 30 reintentos, 20 pasajeros y 10 entregas a la vez, sin y con cada mecanismo
+python prueba_http.py         # los 5 casos
+python prueba_http.py 3       # solo el caso 3: 50 acreditaciones a la vez
 ```
 
 Usa la API que está corriendo; si no hay ninguna, levanta una propia.
@@ -107,7 +128,7 @@ pip install pytest
 python -m pytest -v
 ```
 
-Son 29 pruebas. Las 16 de `tests/test_casos.py` prueban cada caso con el mismo orden intercalado de la demo y con hilos reales. Las 13 de `tests/test_api.py` levantan la API y le mandan pedidos HTTP de verdad, también desde muchos hilos a la vez.
+Son 34 pruebas. Las 16 de `tests/test_casos.py` prueban cada caso con el mismo orden intercalado de la demo y con hilos reales. Las 18 de `tests/test_api.py` levantan la API y le mandan pedidos HTTP de verdad, también desde muchos hilos a la vez.
 
 ## Cómo está armado el código
 

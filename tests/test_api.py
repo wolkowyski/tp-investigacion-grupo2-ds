@@ -110,7 +110,40 @@ def test_pagos_sin_deduplicacion(url):
     assert saldo() == 13000
 
 
+# ---------------- Caso 3: acreditar ----------------
+def test_acreditar_de_a_uno_da_bien_con_y_sin_control(url):
+    pedir(url, "POST", "/conductores/1/acreditar/sin-control", {"monto": 1500})
+    codigo, body, _ = pedir(url, "POST", "/conductores/1/acreditar", {"monto": 2000})
+    assert codigo == 200 and body["saldo"] == 13500
+    assert pedir(url, "POST", "/conductores/99/acreditar", {"monto": 100})[0] == 404
+    assert pedir(url, "POST", "/conductores/1/acreditar", {"monto": -5})[0] == 400
+
+
+# ---------------- Caso 4: asignaciones ----------------
+def test_asignaciones_un_exito_y_un_409(url):
+    assert pedir(url, "POST", "/asignaciones", ANA)[0] == 201
+    assert pedir(url, "POST", "/asignaciones", {"pasajero": "Beto", "conductor_id": 1})[0] == 409
+    assert pedir(url, "GET", "/conductores/1")[1]["version"] == 1
+
+
 # ---------------- Concurrencia por HTTP ----------------
+def test_http_50_acreditaciones_atomicas_a_la_vez(url):
+    en_paralelo(url, [("POST", "/conductores/1/acreditar", {"monto": 100}, None)] * 50)
+    assert saldo() == 15000
+
+
+def test_http_50_acreditaciones_sin_control_pierden_plata(url):
+    en_paralelo(url, [("POST", "/conductores/1/acreditar/sin-control", {"monto": 100}, None)] * 50)
+    assert saldo() < 15000
+
+
+def test_http_20_asignaciones_con_bloqueo_optimista(url):
+    pedidos = [("POST", "/asignaciones", {"pasajero": f"P{i}", "conductor_id": 1}, None) for i in range(20)]
+    codigos = sorted(c for c, _, _ in en_paralelo(url, pedidos))
+    assert codigos == [201] + [409] * 19
+    assert reservas() == 1
+
+
 def test_http_30_reintentos_a_la_vez_una_reserva(url):
     respuestas = en_paralelo(url, [("POST", "/reservas", ANA, "k-ana")] * 30)
     assert reservas() == 1

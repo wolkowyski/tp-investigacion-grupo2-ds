@@ -16,18 +16,20 @@ Ejecutar:
     python api.py               escucha en http://127.0.0.1:5050
     PORT=6000 python api.py     en otro puerto (en PowerShell: $env:PORT=6000; python api.py)
 
-Endpoints:
-    GET  /                              lista de endpoints
-    GET  /conductores                   todos los conductores
-    GET  /conductores/{id}              un conductor (404 si no existe)
-    GET  /reservas                      todas las reservas
-    GET  /reservas/{id}                 una reserva (404 si no existe)
-    POST /reservas                      CON idempotencia + bloqueo optimista (caso 5)
-                                        exige el header Idempotency-Key
-    POST /reservas/sin-idempotencia     SIN ningún mecanismo (caso 1, parte A)
-    POST /pagos                         CON deduplicación por id de mensaje (caso 2)
-    POST /pagos/sin-deduplicacion       SIN deduplicación (caso 2, parte A)
-    POST /reset                         deja la base como al principio
+Endpoints, por caso (A = sin el concepto, B = con el concepto):
+    Caso 1   A  POST /reservas/sin-idempotencia            crear_reserva_sin_idempotencia()
+             B  POST /reservas  + header Idempotency-Key   reservar()  (la idempotencia del caso 1
+                                                            + el bloqueo optimista del caso 4)
+    Caso 2   A  POST /pagos/sin-deduplicacion              procesar_sin_deduplicacion()
+             B  POST /pagos                                procesar_con_deduplicacion()
+    Caso 3   A  POST /conductores/{id}/acreditar/sin-control   acreditar_ganancia()
+             B  POST /conductores/{id}/acreditar           acreditar_ganancia_atomica()
+    Caso 4   A  POST /asignaciones/sin-control             asignar_sin_control()
+             B  POST /asignaciones                         asignar_con_bloqueo_optimista()
+    Caso 5      POST /reservas  + header Idempotency-Key   reservar()
+
+    Consultas:  GET /conductores, GET /conductores/{id}, GET /reservas, GET /reservas/{id}
+    POST /reset                                            deja la base como al principio
 """
 import json
 import os
@@ -38,6 +40,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from caso1_idempotencia import crear_reserva_sin_idempotencia
 from caso2_deduplicacion import procesar_con_deduplicacion, procesar_sin_deduplicacion
+from caso3_condicion_carrera import acreditar_ganancia, acreditar_ganancia_atomica
+from caso4_control_concurrencia import asignar_con_bloqueo_optimista, asignar_sin_control
 from caso5_todo_junto import reservar
 from consola import color
 from db import conectar, reiniciar
@@ -157,17 +161,63 @@ def post_pagos_sin_deduplicacion(body, headers):
     return 200, {"ack": ack, "duplicado": False, "saldo": saldo}, {}
 
 
+def monto_de(body):
+    monto = body.get("monto")
+    if not isinstance(monto, int) or isinstance(monto, bool) or monto <= 0:
+        raise ErrorHTTP(400, "falta 'monto' (número mayor a 0)")
+    return monto
+
+
+def conductor_existente(cid):
+    if not fila("SELECT id FROM conductores WHERE id = ?", cid):
+        raise ErrorHTTP(404, f"no existe el conductor {cid}")
+
+
+def post_acreditar_sin_control(cid, body, headers):
+    """CASO 3, parte A: leer, calcular y escribir separados (se puede perder una acreditación)."""
+    conductor_existente(cid)
+    monto = monto_de(body)
+    saldo = ejecutar(acreditar_ganancia(cid, monto))         # <- la función del caso 3
+    return 200, {"conductor_id": cid, "acreditado": monto, "saldo": saldo}, {}
+
+
+def post_acreditar(cid, body, headers):
+    """CASO 3, la solución: la base suma en una sola operación (saldo = saldo + ?)."""
+    conductor_existente(cid)
+    monto = monto_de(body)
+    saldo = ejecutar(acreditar_ganancia_atomica(cid, monto))
+    return 200, {"conductor_id": cid, "acreditado": monto, "saldo": saldo}, {}
+
+
+def post_asignaciones_sin_control(body, headers):
+    """CASO 4, parte A: verificar y después actuar, sin volver a verificar."""
+    pasajero, conductor_id = datos_de_reserva(body)
+    r = ejecutar(asignar_sin_control(pasajero, conductor_id))   # <- la función del caso 4
+    return r["codigo"], r, {}
+
+
+def post_asignaciones(body, headers):
+    """CASO 4, parte B: bloqueo optimista con la columna version (409 si otro ganó)."""
+    pasajero, conductor_id = datos_de_reserva(body)
+    r = ejecutar(asignar_con_bloqueo_optimista(pasajero, conductor_id))
+    return r["codigo"], r, {}
+
+
 def post_reset(body, headers):
     reiniciar()
     return 200, {"mensaje": "base reiniciada: Carlos (id 1) y Diana (id 2) disponibles, saldo $10000"}, {}
 
 
 def get_inicio():
-    return 200, {"endpoints": [
-        "GET  /conductores", "GET  /conductores/{id}", "GET  /reservas", "GET  /reservas/{id}",
-        "POST /reservas  (header Idempotency-Key)", "POST /reservas/sin-idempotencia",
-        "POST /pagos", "POST /pagos/sin-deduplicacion", "POST /reset",
-    ]}, {}
+    return 200, {"endpoints": {
+        "Caso 1": ["POST /reservas/sin-idempotencia", "POST /reservas  (header Idempotency-Key)"],
+        "Caso 2": ["POST /pagos/sin-deduplicacion", "POST /pagos"],
+        "Caso 3": ["POST /conductores/{id}/acreditar/sin-control", "POST /conductores/{id}/acreditar"],
+        "Caso 4": ["POST /asignaciones/sin-control", "POST /asignaciones"],
+        "Caso 5": ["POST /reservas  (header Idempotency-Key)"],
+        "Consultas": ["GET /conductores", "GET /conductores/{id}", "GET /reservas", "GET /reservas/{id}"],
+        "Reiniciar": ["POST /reset"],
+    }}, {}
 
 
 def get_conductores():
@@ -197,7 +247,13 @@ POST = {
     "/reservas/sin-idempotencia": post_reservas_sin_idempotencia,
     "/pagos": post_pagos,
     "/pagos/sin-deduplicacion": post_pagos_sin_deduplicacion,
+    "/asignaciones": post_asignaciones,
+    "/asignaciones/sin-control": post_asignaciones_sin_control,
     "/reset": post_reset,
+}
+POST_CON_ID = {
+    re.compile(r"^/conductores/(\d+)/acreditar$"): post_acreditar,
+    re.compile(r"^/conductores/(\d+)/acreditar/sin-control$"): post_acreditar_sin_control,
 }
 GET = {
     "/": get_inicio,
@@ -232,13 +288,18 @@ class Manejador(BaseHTTPRequestHandler):
             m = patron.match(ruta)
             if m:
                 return funcion(int(m.group(1)))
-        if ruta in POST:
+        if ruta in POST or any(p.match(ruta) for p in POST_CON_ID):
             raise ErrorHTTP(405, f"{ruta} solo acepta POST")
         raise ErrorHTTP(404, f"no existe {ruta}")
 
     def _post(self):
         ruta = self.path.split("?")[0].rstrip("/") or "/"
-        if ruta not in POST:
+        funcion, id_en_ruta = POST.get(ruta), ()
+        for patron, f in POST_CON_ID.items():
+            m = patron.match(ruta)
+            if m:
+                funcion, id_en_ruta = f, (int(m.group(1)),)   # p. ej. /conductores/1/acreditar → 1
+        if funcion is None:
             if ruta in GET or any(p.match(ruta) for p in GET_CON_ID):
                 raise ErrorHTTP(405, f"{ruta} solo acepta GET")
             raise ErrorHTTP(404, f"no existe {ruta}")
@@ -250,7 +311,7 @@ class Manejador(BaseHTTPRequestHandler):
             raise ErrorHTTP(400, "el body no es un JSON válido")
         if not isinstance(body, dict):
             raise ErrorHTTP(400, "el body tiene que ser un objeto JSON")
-        return POST[ruta](body, self.headers)
+        return funcion(*id_en_ruta, body, self.headers)
 
     def _atender(self, funcion):
         try:
@@ -287,12 +348,15 @@ class Manejador(BaseHTTPRequestHandler):
         pass
 
 
+class Servidor(ThreadingHTTPServer):
+    daemon_threads = True       # un hilo por pedido: los pedidos se atienden a la vez
+    request_queue_size = 128    # conexiones en espera (por defecto son 5 y con 50 pedidos a la vez se pierden)
+
+
 def crear_servidor(host=HOST, port=PORT, silencioso=False):
     reiniciar()
     manejador = type("ManejadorConfigurado", (Manejador,), {"silencioso": silencioso})
-    servidor = ThreadingHTTPServer((host, port), manejador)
-    servidor.daemon_threads = True
-    return servidor
+    return Servidor((host, port), manejador)
 
 
 def arrancar_en_segundo_plano(port=0):

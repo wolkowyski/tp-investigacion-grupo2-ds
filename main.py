@@ -49,17 +49,27 @@ def resumen():
     print()
 
 
+def aviso_postman(clave):
+    """Al final de cada caso: dónde seguir con la API HTTP (py api.py en otra terminal)."""
+    nombre = CASOS[clave][0]
+    print()
+    print(color(f"  ➜  Ahora como API real: en Postman, carpeta «Caso {clave} · {nombre}» (A y después B).", "cian", "negrita"))
+    print(color(f"     Con pedidos HTTP a la vez:  py prueba_http.py {clave}", "gris"))
+
+
 def correr(clave):
     if clave == "todos":
         for c in CASOS:
             limpiar()
             CASOS[c][3]()
+            aviso_postman(c)
             pausa("Enter para el siguiente caso")
         limpiar()
         resumen()
     elif clave in CASOS:
         limpiar()
         CASOS[clave][3]()
+        aviso_postman(clave)
     elif clave in ("6", "resumen"):
         limpiar()
         resumen()
